@@ -1,32 +1,38 @@
 # Download, extract Nexus to /tmp/sonatype/nexus
-FROM eclipse-temurin:8-jre-jammy as downloader
+FROM azul/zulu-openjdk-alpine:8-jre-latest as downloader
 
-ARG NEXUS_VERSION=3.43.0-01
+ARG NEXUS_VERSION=3.55.0-01
 ARG NEXUS_DOWNLOAD_URL=https://download.sonatype.com/nexus/3/nexus-${NEXUS_VERSION}-unix.tar.gz
+ARG NEXUS_DOWNLOAD_SHA256_HASH=fd6e320f781552512642bc1cbebb9c84bad2597605045932d9443bcec22cc671
 
 # Download Nexus and other stuff we need later
 # Use wget to improve performance (#11)
 # Install wget
-RUN apt update && apt install -y wget
+RUN apk add wget tar
+
+WORKDIR /tmp
+
 # Download + extract Nexus to "/tmp/sonatype/nexus" for use later
-RUN wget --quiet --output-document=/tmp/nexus.tar.gz "${NEXUS_DOWNLOAD_URL}" && \
-    mkdir /tmp/sonatype && \
-    tar -zxf /tmp/nexus.tar.gz -C /tmp/sonatype && \
-    mv /tmp/sonatype/nexus-${NEXUS_VERSION} /tmp/sonatype/nexus && \
-    rm /tmp/nexus.tar.gz
-
-
-
+RUN wget --quiet --output-document=./nexus-${NEXUS_VERSION}-unix.tar.gz "${NEXUS_DOWNLOAD_URL}" && \
+    mkdir ./sonatype && \
+    # Double space separator due to busybox bug
+    echo "${NEXUS_DOWNLOAD_SHA256_HASH}  nexus-${NEXUS_VERSION}-unix.tar.gz" > ./nexus-${NEXUS_VERSION}-unix.tar.gz.sha256 && \
+    sha256sum ./nexus-${NEXUS_VERSION}-unix.tar.gz && \
+    sha256sum -c ./nexus-${NEXUS_VERSION}-unix.tar.gz.sha256 && \
+    tar -zxf ./nexus-${NEXUS_VERSION}-unix.tar.gz -C ./sonatype && \
+    mv ./sonatype/nexus-${NEXUS_VERSION} ./sonatype/nexus
 
 # Runtime image
 # Logic adapted from official Dockerfile
 # https://github.com/sonatype/docker-nexus3/blob/master/Dockerfile
-FROM eclipse-temurin:8-jre-jammy
+FROM azul/zulu-openjdk-alpine:8-jre-latest
+
+RUN apk --no-cache add sed
 
 # Image metadata
 # git commit
 LABEL org.opencontainers.image.revision="-"
-LABEL org.opencontainers.image.source="https://github.com/klo2k/nexus3-docker"
+LABEL org.opencontainers.image.source="https://github.com/skooch/nexus3-docker"
 
 # Setup: Rename App, Data and Work directory per official image
 # App directory (/opt/sonatype/nexus)
@@ -46,16 +52,14 @@ RUN sed -i -e 's/^nexus-context-path=\//nexus-context-path=\/\${NEXUS_CONTEXT}/g
 # Create Nexus user + group, based on official image:
 #   nexus:x:200:200:Nexus Repository Manager user:/opt/sonatype/nexus:/bin/false
 #   nexus:x:200:nexus
-RUN groupadd --gid 200 nexus && \
-    useradd \
+RUN addgroup -g 3000 nexus && \
+    adduser \
       --system \
       --shell /bin/false \
-      --comment 'Nexus Repository Manager user' \
-      --home-dir /opt/sonatype/nexus \
+      --home /opt/sonatype/nexus \
       --no-create-home \
-      --no-user-group \
-      --uid 200 \
-      --gid 200 \
+      --uid 3000 \
+      --ingroup nexus \
       nexus
 
 # Data directory "/nexus-data" owned by "nexus" user
@@ -73,7 +77,6 @@ ENV NEXUS_HOME=/opt/sonatype/nexus \
     NEXUS_DATA=/nexus-data \
     NEXUS_CONTEXT='' \
     SONATYPE_WORK=/opt/sonatype/sonatype-work \
-    # Low `-Xms`, `-Xmx` default for Raspberry Pi
-    INSTALL4J_ADD_VM_PARAMS="-Xms1200m -Xmx1200m -XX:MaxDirectMemorySize=2g -Djava.util.prefs.userRoot=/nexus-data/javaprefs"
+    INSTALL4J_ADD_VM_PARAMS="-Xms2703m -Xmx2703m -XX:MaxDirectMemorySize=2703m -Djava.util.prefs.userRoot=${NEXUS_DATA}/javaprefs"
 
 CMD ["/opt/sonatype/nexus/bin/nexus", "run"]
